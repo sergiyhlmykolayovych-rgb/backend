@@ -1,0 +1,241 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum RefreshTokenStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum ProjectCategory {
+  PRIVATE
+  COMMERCIAL
+  PUBLIC
+  OTHER
+}
+
+enum BuildingType {
+  HOUSE
+  COMMERCIAL
+  RETAIL
+  PUBLIC
+  OTHER
+}
+
+enum RequestStatus {
+  NEW
+  IN_PROGRESS
+  DONE
+  REJECTED
+}
+
+enum MessageStatus {
+  NEW
+  READ
+}
+
+// Власник сайту. Користувачів більше немає: архітектор один, тому без ролей і запрошень.
+model User {
+  id String @id @default(uuid()) @db.Uuid
+
+  email        String @unique @db.VarChar(255)
+  passwordHash String @map("password_hash") @db.VarChar(255)
+
+  firstName String @map("first_name") @db.VarChar(100)
+  lastName  String @map("last_name") @db.VarChar(100)
+
+  status UserStatus @default(ACTIVE)
+
+  // Після кількох невдалих входів поспіль обліковий запис блокується на деякий час.
+  failedLoginCount Int       @default(0) @map("failed_login_count")
+  lockedUntil      DateTime? @map("locked_until")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+
+  tokenHash String             @map("token_hash") @db.VarChar(255)
+  status    RefreshTokenStatus @default(ACTIVE)
+
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@map("refresh_tokens")
+}
+
+// Проєкт у портфоліо. На сайті показується лише опублікований і лише з фото.
+model Project {
+  id String @id @default(uuid()) @db.Uuid
+
+  slug String @unique @db.VarChar(160)
+
+  title        String          @db.VarChar(150)
+  category     ProjectCategory @default(PRIVATE)
+  // Тип будівлі словами, які бачить відвідувач («Торговий комплекс»).
+  buildingType String          @map("building_type") @db.VarChar(100)
+
+  location String? @db.VarChar(150)
+  year     Int?
+  area     String? @db.VarChar(50)
+  status   String? @db.VarChar(100)
+  scope    String? @db.VarChar(255)
+
+  intro   String @default("") @db.Text
+  concept String @default("") @db.Text
+
+  isPublished Boolean @default(false) @map("is_published")
+  // Показувати у слайдері на головній сторінці.
+  isFeatured  Boolean @default(false) @map("is_featured")
+
+  // Продаж готового проєкту. Покупець отримає або PDF (fileKey у закритому сховищі),
+  // або посилання на Google Диск (fileUrl) для великих файлів. Одночасно діє лише одне з двох.
+  price    Decimal? @db.Decimal(10, 2)
+  fileKey  String?  @map("file_key") @db.VarChar(255)
+  fileName String?  @map("file_name") @db.VarChar(255)
+  fileSize Int?     @map("file_size")
+  fileUrl  String?  @map("file_url") @db.VarChar(500)
+
+  // Порядок у списках сайту: менше значення — вище.
+  position Int @default(0)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  images    ProjectImage[]
+  requests  ProjectRequest[]
+  purchases Purchase[]
+
+  @@index([isPublished, position])
+  @@map("projects")
+}
+
+model ProjectImage {
+  id String @id @default(uuid()) @db.Uuid
+
+  projectId String @map("project_id") @db.Uuid
+
+  fileKey  String @map("file_key") @db.VarChar(255)
+  mimeType String @map("mime_type") @db.VarChar(100)
+  alt      String @default("") @db.VarChar(255)
+
+  // Фото з найменшою позицією — обкладинка проєкту.
+  position Int @default(0)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, position])
+  @@map("project_images")
+}
+
+// Заявка на проєкт із багатокрокової форми сайту.
+model ProjectRequest {
+  id String @id @default(uuid()) @db.Uuid
+
+  buildingType BuildingType @map("building_type")
+
+  area         String @default("") @db.VarChar(40)
+  location     String @default("") @db.VarChar(120)
+  stage        String @default("") @db.VarChar(80)
+  scope        String @default("") @db.VarChar(80)
+  budget       String @default("") @db.VarChar(80)
+  style        String @default("") @db.VarChar(80)
+  floors       String @default("") @db.VarChar(20)
+  siteInfo     String @default("") @map("site_info") @db.Text
+  requirements String @default("") @db.Text
+
+  name    String @db.VarChar(120)
+  // Завжди в одному форматі (+380XXXXXXXXX), щоб легко знаходити повторні заявки.
+  phone   String @db.VarChar(30)
+  email   String @default("") @db.VarChar(255)
+  message String @default("") @db.Text
+
+  // Проєкт-приклад, з якого відвідувач натиснув «Замовити такий проєкт».
+  projectId String? @map("project_id") @db.Uuid
+  reference String  @default("") @db.VarChar(200)
+
+  status RequestStatus @default(NEW)
+  note   String?       @db.Text
+
+  privacyAcceptedAt DateTime @map("privacy_accepted_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([phone])
+  @@map("project_requests")
+}
+
+// Коротке повідомлення з форми на сторінці «Контакти».
+model ContactMessage {
+  id String @id @default(uuid()) @db.Uuid
+
+  name    String @db.VarChar(120)
+  phone   String @db.VarChar(30)
+  message String @db.Text
+
+  status MessageStatus @default(NEW)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([status, createdAt])
+  @@map("contact_messages")
+}
+
+// Покупка готового проєкту в Telegram-боті. Запис створюється, коли Telegram підтвердив оплату;
+// deliveredAt заповнюється, коли файл проєкту надіслано покупцю.
+model Purchase {
+  id String @id @default(uuid()) @db.Uuid
+
+  // Проєкт могли видалити після покупки, тому звʼязок необовʼязковий, а назва збережена окремо.
+  projectId    String? @map("project_id") @db.Uuid
+  projectTitle String  @map("project_title") @db.VarChar(150)
+
+  // Чат покупця в Telegram: в особистому чаті збігається з його ідентифікатором.
+  chatId String @map("chat_id") @db.VarChar(32)
+
+  amount   Decimal @db.Decimal(10, 2)
+  currency String  @db.VarChar(8)
+
+  // Номер платежу в Telegram: унікальний, тому повторне оновлення не дасть другої покупки.
+  chargeId         String  @unique @map("charge_id") @db.VarChar(255)
+  providerChargeId String? @map("provider_charge_id") @db.VarChar(255)
+
+  paidAt        DateTime  @default(now()) @map("paid_at")
+  deliveredAt   DateTime? @map("delivered_at")
+  deliveryError String?   @map("delivery_error") @db.VarChar(255)
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([chatId, paidAt])
+  @@index([paidAt])
+  @@map("purchases")
+}
