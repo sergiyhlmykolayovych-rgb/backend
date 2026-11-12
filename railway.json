@@ -1,7 +1,10 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "deploy": {
-    "preDeployCommand": ["pnpm prisma migrate deploy"],
+    "preDeployCommand": [
+      "pnpm prisma migrate deploy",
+      "pnpm prisma db seed"
+    ],
     "healthcheckPath": "/api/v1/health",
     "healthcheckTimeout": 120
   }
